@@ -12,6 +12,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Call Groq API
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -24,13 +25,16 @@ export async function POST(req: Request) {
           {
             role: "system",
             content:
-              "You are EduNex, an assistant for Nilgiri College. " +
-              "Answer questions about the college. " +
-              "If unsure about fees or dates, refer the user to the official website.",
+              "You are EduNex, an assistant chatbot for Nilgiri College (https://nilgiricollege.ac.in/). " +
+              "Always answer as if you represent Nilgiri College. " +
+              "If you are not sure about exact facts like current fees, say that clearly and " +
+              "suggest visiting the official website or contacting the college.",
           },
           {
             role: "user",
-            content: prompt,
+            content:
+              "User asked this (assume they are talking about Nilgiri College):\n\n" +
+              prompt,
           },
         ],
         temperature: 0.5,
@@ -38,16 +42,8 @@ export async function POST(req: Request) {
       }),
     });
 
-    // FIX: Read as text first to avoid "Unexpected end of JSON" crash
+    // FIX: Read raw text first to avoid crashing on empty bodies
     const textBody = await res.text();
-
-    if (!res.ok) {
-      // Return the actual error text from Groq instead of crashing
-      return NextResponse.json(
-        { error: `Groq API Error (${res.status}): ${textBody || "Empty response"}` },
-        { status: res.status }
-      );
-    }
 
     if (!textBody) {
       return NextResponse.json(
@@ -56,27 +52,38 @@ export async function POST(req: Request) {
       );
     }
 
-    // Safely parse JSON
+    // Try parsing JSON safely
     let json: any;
     try {
       json = JSON.parse(textBody);
     } catch {
+      // If it fails, return the raw text (often an HTML error page from a proxy)
       return NextResponse.json(
-        { error: "Groq response was not valid JSON." },
+        { error: `Groq invalid JSON: ${textBody.slice(0, 100)}...` },
         { status: 500 }
       );
     }
 
+    if (!res.ok) {
+      const msg = json?.error?.message || JSON.stringify(json);
+      return NextResponse.json(
+        { error: `Groq API Error: ${msg}` },
+        { status: res.status }
+      );
+    }
+
     const answer = json.choices?.[0]?.message?.content;
-    
     if (!answer) {
-      return NextResponse.json({ error: "Groq returned no answer." }, { status: 500 });
+      return NextResponse.json(
+        { error: "Groq response missing content." },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ text: answer, provider: "groq" });
   } catch (e: any) {
     return NextResponse.json(
-      { error: e.message || "Groq route failed internally" },
+      { error: e?.message || "Internal Server Error in Groq route" },
       { status: 500 }
     );
   }
