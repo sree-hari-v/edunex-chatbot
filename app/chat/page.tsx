@@ -54,14 +54,6 @@ function IconSend(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-function IconUser(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
-      <circle cx="12" cy="7" r="4" strokeWidth="2" />
-      <path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
 function IconBot(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
@@ -619,6 +611,7 @@ function MessageRow({
     errorBubble: string;
     badge: string;
     subText: string;
+    border: string; // FIX: Added 'border' here to satisfy TS
   };
 }) {
   const isUser = msg.role === "user";
