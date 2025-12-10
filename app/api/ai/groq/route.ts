@@ -1,26 +1,20 @@
 import { NextResponse } from "next/server";
 
+// IMPORTANT: The function name must be 'POST' (uppercase)
 export async function POST(req: Request) {
   try {
-    // 1. Safe Request Parsing
-    let prompt;
-    try {
-      const body = await req.json();
-      prompt = body.prompt;
-    } catch (e) {
-      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-    }
-
-    // 2. Check API Key
+    const body = await req.json(); // Safe check for body
+    const { prompt } = body;
     const key = process.env.GROQ_API_KEY;
+
     if (!key) {
       return NextResponse.json(
-        { error: "GROQ_API_KEY is missing on Vercel." },
+        { error: "GROQ_API_KEY is missing in .env.local" },
         { status: 500 }
       );
     }
 
-    // 3. Call Groq API
+    // Call Groq
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -30,71 +24,31 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages: [
-          {
-            role: "system",
-            content:
-              "You are EduNex, an assistant chatbot for Nilgiri College (https://nilgiricollege.ac.in/). " +
-              "Always answer as if you represent Nilgiri College. " +
-              "If you are not sure about exact facts like current fees, say that clearly and " +
-              "suggest visiting the official website or contacting the college.",
-          },
-          {
-            role: "user",
-            content:
-              "User asked this (assume they are talking about Nilgiri College):\n\n" +
-              prompt,
-          },
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: prompt },
         ],
-        temperature: 0.5,
         max_tokens: 1024,
       }),
     });
 
-    // 4. THE FIX: Read as text first.
-    // This prevents the "Unexpected end of JSON" crash on the frontend.
-    const rawText = await res.text();
-
-    if (!rawText) {
-      // If Groq returns nothing, we send a valid JSON error instead of crashing.
-      return NextResponse.json(
-        { error: "Groq API returned an empty response." },
-        { status: 502 }
-      );
-    }
-
-    // 5. Safe JSON Parsing
-    let json;
-    try {
-      json = JSON.parse(rawText);
-    } catch (e) {
-      // If Groq returns HTML error (like 504 Gateway Timeout), we catch it here.
-      return NextResponse.json(
-        { error: `Groq returned invalid JSON: ${rawText.slice(0, 50)}...` },
-        { status: 502 }
-      );
-    }
-
-    // 6. Check for API Errors inside the JSON
+    const text = await res.text();
+    
     if (!res.ok) {
-      const msg = json?.error?.message || "Unknown error";
       return NextResponse.json(
-        { error: `Groq Error (${res.status}): ${msg}` },
+        { error: `Groq API Error (${res.status}): ${text}` },
         { status: res.status }
       );
     }
 
-    // 7. Success
-    const answer = json.choices?.[0]?.message?.content || "";
-    if (!answer) {
-      return NextResponse.json({ error: "Groq response was empty." }, { status: 500 });
-    }
+    const data = JSON.parse(text);
+    return NextResponse.json({ 
+      text: data.choices?.[0]?.message?.content || "No answer",
+      provider: "groq" 
+    });
 
-    return NextResponse.json({ text: answer, provider: "groq" });
-
-  } catch (e: any) {
-    console.error("Groq Route Error:", e);
+  } catch (error: any) {
     return NextResponse.json(
-      { error: e.message || "Internal Server Error" },
+      { error: error.message || "Internal Server Error" },
       { status: 500 }
     );
   }
