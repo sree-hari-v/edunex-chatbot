@@ -6,7 +6,10 @@ export async function POST(req: Request) {
     const key = process.env.GROQ_API_KEY;
 
     if (!key) {
-      return NextResponse.json({ error: "GROQ_API_KEY not configured" }, { status: 500 });
+      return NextResponse.json(
+        { error: "GROQ_API_KEY not configured on server" },
+        { status: 500 }
+      );
     }
 
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -21,17 +24,13 @@ export async function POST(req: Request) {
           {
             role: "system",
             content:
-              "You are EduNex, an assistant chatbot for Nilgiri College (https://nilgiricollege.ac.in/). " +
-              "Always answer as if you represent Nilgiri College. " +
-              "Constrain your answers to plausible information about Nilgiri College: courses, departments, fees, " +
-              "admissions, campus life, etc. If something is unclear or not known, say you are not sure and " +
-              "suggest visiting the official website or contacting the college office.",
+              "You are EduNex, an assistant for Nilgiri College. " +
+              "Answer questions about the college. " +
+              "If unsure about fees or dates, refer the user to the official website.",
           },
           {
             role: "user",
-            content:
-              "User asked this (assume they are talking about Nilgiri College):\n\n" +
-              prompt,
+            content: prompt,
           },
         ],
         temperature: 0.5,
@@ -39,20 +38,46 @@ export async function POST(req: Request) {
       }),
     });
 
-    const json = await res.json();
+    // FIX: Read as text first to avoid "Unexpected end of JSON" crash
+    const textBody = await res.text();
 
     if (!res.ok) {
-      const msg = json.error?.message || `Groq error ${res.status}`;
-      return NextResponse.json({ error: msg }, { status: res.status });
+      // Return the actual error text from Groq instead of crashing
+      return NextResponse.json(
+        { error: `Groq API Error (${res.status}): ${textBody || "Empty response"}` },
+        { status: res.status }
+      );
     }
 
-    const text = json.choices?.[0]?.message?.content;
-    if (!text) {
-      return NextResponse.json({ error: "Groq: Empty response" }, { status: 500 });
+    if (!textBody) {
+      return NextResponse.json(
+        { error: "Groq returned an empty response." },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ text, provider: "groq" });
+    // Safely parse JSON
+    let json: any;
+    try {
+      json = JSON.parse(textBody);
+    } catch {
+      return NextResponse.json(
+        { error: "Groq response was not valid JSON." },
+        { status: 500 }
+      );
+    }
+
+    const answer = json.choices?.[0]?.message?.content;
+    
+    if (!answer) {
+      return NextResponse.json({ error: "Groq returned no answer." }, { status: 500 });
+    }
+
+    return NextResponse.json({ text: answer, provider: "groq" });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || "Groq route failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e.message || "Groq route failed internally" },
+      { status: 500 }
+    );
   }
 }
