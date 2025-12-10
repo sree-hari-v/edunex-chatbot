@@ -2,10 +2,25 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { resolveQuery, type Suggestion } from "../../api/chat";
+// Removed import from "../../api/chat" to fix the missing file issue
+import { supabase } from "../../api/supabase"; // Make sure this path matches your project
 import { getAdminSession } from "../../api/admin_local";
 import { canUse, increment, getAllRemaining } from "../../api/usage";
 import type { Provider } from "../../api/usage";
+
+/* --- TYPES --- */
+type Suggestion = {
+  label: string;
+  faqId?: number;
+};
+
+type ChatResponse = {
+  suggestions: Suggestion[];
+  matchedAnswer: string | null;
+  aiText: string | null;
+  aiProvider: Provider | null;
+  error?: string;
+};
 
 type MsgRole = "user" | "assistant";
 type Message = {
@@ -25,12 +40,95 @@ type PendingConfirmation = {
 
 const STORAGE_KEY = "edunex_chat_history_modern_styled_v1";
 
+/* --- SAFE QUERY RESOLVER (Fixed JSON Crash) --- */
+async function resolveQuery(text: string, provider: Provider): Promise<ChatResponse> {
+  try {
+    // 1. Check Supabase FAQ (Optional)
+    try {
+      const { data: faqs } = await supabase
+        .from("faq_responses")
+        .select("id, keyword, answer")
+        .textSearch("keyword", text, { type: "websearch", config: "english" })
+        .limit(3);
+
+      if (faqs && faqs.length > 0) {
+        return {
+          suggestions: faqs.map((f: any) => ({ label: f.keyword, faqId: f.id })),
+          matchedAnswer: null,
+          aiText: null,
+          aiProvider: null,
+        };
+      }
+    } catch (e) {
+      // Ignore Supabase error
+    }
+
+    // 2. Call AI API
+    const res = await fetch(`/api/ai/${provider}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text }),
+    });
+
+    // FIX: Read text first to prevent crash
+    const rawText = await res.text();
+
+    if (!res.ok) {
+      return {
+        suggestions: [],
+        matchedAnswer: null,
+        aiText: null,
+        aiProvider: null,
+        error: `API Error (${res.status}): ${rawText.slice(0, 100)}`,
+      };
+    }
+
+    if (!rawText) {
+      return {
+        suggestions: [],
+        matchedAnswer: null,
+        aiText: null,
+        aiProvider: null,
+        error: "Empty response from AI",
+      };
+    }
+
+    // Safe JSON parse
+    try {
+      const data = JSON.parse(rawText);
+      if (data.error) throw new Error(data.error);
+      return {
+        suggestions: [],
+        matchedAnswer: null,
+        aiText: data.text,
+        aiProvider: data.provider,
+      };
+    } catch (e: any) {
+      return {
+        suggestions: [],
+        matchedAnswer: null,
+        aiText: null,
+        aiProvider: null,
+        error: e.message || "Invalid JSON from AI",
+      };
+    }
+  } catch (err: any) {
+    return {
+      suggestions: [],
+      matchedAnswer: null,
+      aiText: null,
+      aiProvider: null,
+      error: err.message || "Network Error",
+    };
+  }
+}
+
+/* --- ICONS --- */
 function formatTime(ts: number) {
   const d = new Date(ts);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/* Icons */
 function IconSun(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
@@ -204,6 +302,7 @@ export default function ChatPage() {
     }
 
     setIsTyping(true);
+    // Use local resolveQuery
     const res = await resolveQuery(text, provider);
     setIsTyping(false);
 
@@ -255,7 +354,7 @@ export default function ChatPage() {
         role: "assistant",
         content: res.aiText,
         time: Date.now(),
-        meta: { provider: res.aiProvider, usedAI: true },
+        meta: { provider: res.aiProvider || provider, usedAI: true },
       };
       setMessages((prev) => [...prev, assistantMsg]);
       if (res.aiProvider) {
@@ -315,7 +414,7 @@ export default function ChatPage() {
             role: "assistant",
             content: resAI.aiText,
             time: Date.now(),
-            meta: { provider: resAI.aiProvider, usedAI: true },
+            meta: { provider: resAI.aiProvider || provider, usedAI: true },
           };
           setMessages((prev) => [...prev, assistantMsg]);
           if (resAI.aiProvider) {
@@ -373,7 +472,7 @@ export default function ChatPage() {
           role: "assistant",
           content: resAI.aiText,
           time: Date.now(),
-          meta: { provider: resAI.aiProvider, usedAI: true },
+          meta: { provider: resAI.aiProvider || provider, usedAI: true },
         };
         setMessages((prev) => [...prev, assistantMsg]);
         if (resAI.aiProvider) {
@@ -611,7 +710,7 @@ function MessageRow({
     errorBubble: string;
     badge: string;
     subText: string;
-    border: string; // FIX: Added 'border' here to satisfy TS
+    border: string; // FIX: Prop included to prevent build errors
   };
 }) {
   const isUser = msg.role === "user";
