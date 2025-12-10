@@ -2,17 +2,25 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    const { prompt } = await req.json();
-    const key = process.env.GROQ_API_KEY;
+    // 1. Safe Request Parsing
+    let prompt;
+    try {
+      const body = await req.json();
+      prompt = body.prompt;
+    } catch (e) {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
 
+    // 2. Check API Key
+    const key = process.env.GROQ_API_KEY;
     if (!key) {
       return NextResponse.json(
-        { error: "GROQ_API_KEY not configured on server" },
+        { error: "GROQ_API_KEY is missing on Vercel." },
         { status: 500 }
       );
     }
 
-    // Call Groq API
+    // 3. Call Groq API
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -42,48 +50,51 @@ export async function POST(req: Request) {
       }),
     });
 
-    // FIX: Read raw text first to avoid crashing on empty bodies
-    const textBody = await res.text();
+    // 4. THE FIX: Read as text first.
+    // This prevents the "Unexpected end of JSON" crash on the frontend.
+    const rawText = await res.text();
 
-    if (!textBody) {
+    if (!rawText) {
+      // If Groq returns nothing, we send a valid JSON error instead of crashing.
       return NextResponse.json(
-        { error: "Groq returned an empty response." },
-        { status: 500 }
+        { error: "Groq API returned an empty response." },
+        { status: 502 }
       );
     }
 
-    // Try parsing JSON safely
-    let json: any;
+    // 5. Safe JSON Parsing
+    let json;
     try {
-      json = JSON.parse(textBody);
-    } catch {
-      // If it fails, return the raw text (often an HTML error page from a proxy)
+      json = JSON.parse(rawText);
+    } catch (e) {
+      // If Groq returns HTML error (like 504 Gateway Timeout), we catch it here.
       return NextResponse.json(
-        { error: `Groq invalid JSON: ${textBody.slice(0, 100)}...` },
-        { status: 500 }
+        { error: `Groq returned invalid JSON: ${rawText.slice(0, 50)}...` },
+        { status: 502 }
       );
     }
 
+    // 6. Check for API Errors inside the JSON
     if (!res.ok) {
-      const msg = json?.error?.message || JSON.stringify(json);
+      const msg = json?.error?.message || "Unknown error";
       return NextResponse.json(
-        { error: `Groq API Error: ${msg}` },
+        { error: `Groq Error (${res.status}): ${msg}` },
         { status: res.status }
       );
     }
 
-    const answer = json.choices?.[0]?.message?.content;
+    // 7. Success
+    const answer = json.choices?.[0]?.message?.content || "";
     if (!answer) {
-      return NextResponse.json(
-        { error: "Groq response missing content." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Groq response was empty." }, { status: 500 });
     }
 
     return NextResponse.json({ text: answer, provider: "groq" });
+
   } catch (e: any) {
+    console.error("Groq Route Error:", e);
     return NextResponse.json(
-      { error: e?.message || "Internal Server Error in Groq route" },
+      { error: e.message || "Internal Server Error" },
       { status: 500 }
     );
   }
